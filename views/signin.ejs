@@ -14,7 +14,6 @@
       <header class="header auth-header">
         <p class="sitename">Welcome back</p>
       </header>
-
       <main class="auth-main">
         <section class="auth-card">
           <% if (error) { %>
@@ -25,11 +24,11 @@
             <p class="alert success"><%= success %></p>
           <% } %>
 
-          <!-- Login form that validates the entered user_id and password. -->
+          <!-- Authenticates the entered user_id and password. -->
           <form action="/signin" method="POST" class="post-form">
             <div class="form-row">
               <label for="user_id">User ID</label>
-              <input type="text" id="user_id" name="user_id" required placeholder="jane_doe" />
+              <input type="text" id="user_id" name="user_id" required placeholder="Jane_Doe" />
             </div>
 
             <div class="form-row">

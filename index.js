@@ -1,31 +1,28 @@
+// Using Express, Ejs, and PostgreSQL for main functionalities
 const express = require("express");
 const path = require("path");
 const session = require("express-session");
 const methodOverride = require("method-override");
 const { Pool } = require("pg");
 
-// Main Express app setup for the blog application.
+// Starting the app
 const app = express();
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
+const dbUrl = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/BlogDB";
 
-// PostgreSQL connection string. The app will try to connect to BlogDB and
-// gracefully fall back to an in-memory store if the database is unavailable.
-const connectionString =
-  process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/BlogDB";
-
-// Pool manages database connections for the app.
+// Connecting to postgres for database
 const pool = new Pool({
-  connectionString,
+  connectionString: dbUrl,
   ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
-// Fallback storage used only if PostgreSQL is not running locally.
+// Backup data setup just in case
 const fallbackUsers = [];
-let fallbackNextUserId = 1;
 const fallbackPosts = [];
-let fallbackNextPostId = 1;
+let nextPostId = 1;
 let dbReady = false;
 
+// Setting up views and middleware
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));
@@ -45,12 +42,13 @@ app.use((req, res, next) => {
   next();
 });
 
-function normalizeText(value) {
+// Removing extra spaces from user input for cleaniness
+function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-// Ensures the required database tables exist and preloads sample data.
-async function tableSetup() {
+// make the database tables if they do not exist
+async function setUpTables() {
   try {
     await pool.query("SELECT 1");
     dbReady = true;
@@ -75,19 +73,19 @@ async function tableSetup() {
       );
     `);
 
-    const userCount = await pool.query("SELECT COUNT(*)::int AS count FROM users");
-    if (userCount.rows[0].count === 0) {
-      await pool.query(
-        `INSERT INTO users (user_id, password, name) VALUES
+    const userCheck = await pool.query("SELECT COUNT(*)::int AS count FROM users");
+    if (userCheck.rows[0].count === 0) {
+      await pool.query(`
+        INSERT INTO users (user_id, password, name) VALUES
           ('alice', 'pass123', 'Alice Johnson'),
           ('bob', 'pass123', 'Bob Smith'),
-          ('charlie', 'pass123', 'Charlie Brown');`
-      );
+          ('charlie', 'pass123', 'Charlie Brown');
+      `);
     }
 
-    const postCount = await pool.query("SELECT COUNT(*)::int AS count FROM blogs");
-    if (postCount.rows[0].count === 0) {
-      const initialPosts = [
+    const postCheck = await pool.query("SELECT COUNT(*)::int AS count FROM blogs");
+    if (postCheck.rows[0].count === 0) {
+      const stuff = [
         ["alice", "Alice Johnson", "Starting a New Chapter", "This is my first blog post. I am excited to begin this journaling journey and document my ideas, learning, and growth."],
         ["bob", "Bob Smith", "A Morning Walk and Fresh Ideas", "A simple walk in the morning can clear the mind and spark new ideas. The world feels calmer when you make space to think."],
         ["charlie", "Charlie Brown", "Why Small Habits Matter", "Consistency matters more than intensity. Small habits build momentum and create lasting change over time."],
@@ -95,7 +93,7 @@ async function tableSetup() {
         ["bob", "Bob Smith", "What I Want to Build Next", "The next project I want to build is one that is practical, useful, and meaningful for others. Good ideas become great when they solve real problems."],
       ];
 
-      for (const [userId, name, title, body] of initialPosts) {
+      for (const [userId, name, title, body] of stuff) {
         await pool.query(
           `INSERT INTO blogs (creator_name, creator_user_id, title, body, date_created)
            VALUES ($1, $2, $3, $4, NOW())`,
@@ -104,19 +102,18 @@ async function tableSetup() {
       }
     }
 
-    console.log("Database connected and initialized.");
-  } catch (error) {
+    console.log("DB working");
+  } catch (err) {
     dbReady = false;
-    console.warn("PostgreSQL unavailable. Using in-memory fallback store.");
-    console.warn(error.message);
+    console.log("DB not working, using local data instead");
   }
 }
 
-// Creates a new user record and prevents duplicate user IDs.
-async function createUserInStore(userId, password, name) {
-  const cleanUserId = normalizeText(userId);
-  const cleanPassword = normalizeText(password);
-  const cleanName = normalizeText(name);
+// create a new user functionality
+async function createUser(userId, password, name) {
+  const cleanUserId = cleanText(userId);
+  const cleanPassword = cleanText(password);
+  const cleanName = cleanText(name);
 
   if (!cleanUserId || !cleanPassword || !cleanName) {
     return null;
@@ -130,49 +127,47 @@ async function createUserInStore(userId, password, name) {
     return result.rows[0];
   }
 
-  const existing = fallbackUsers.find((user) => user.user_id === cleanUserId);
-  if (existing) {
+  const alreadyThere = fallbackUsers.find((user) => user.user_id === cleanUserId);
+  if (alreadyThere) {
     return null;
   }
 
-  const user = {
+  const newUser = {
     user_id: cleanUserId,
     password: cleanPassword,
     name: cleanName,
   };
-  fallbackUsers.push(user);
-  return user;
+
+  fallbackUsers.push(newUser);
+  return newUser;
 }
 
-// Looks up a user by ID so the sign-in route can validate credentials.
-async function findUserById(userId) {
-  const cleanUserId = normalizeText(userId);
+// find a user using their username
+async function findUser(userId) {
+  const cleanUserId = cleanText(userId);
 
   if (dbReady) {
-    const result = await pool.query(
-      `SELECT * FROM users WHERE user_id = $1`,
-      [cleanUserId]
-    );
+    const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [cleanUserId]);
     return result.rows[0] || null;
   }
-
   return fallbackUsers.find((user) => user.user_id === cleanUserId) || null;
 }
 
-// Fetches all blog posts from the database in newest-first order.
+// Getting all blog posts from database
 async function getPosts() {
   if (dbReady) {
-    const result = await pool.query(
-      `SELECT blog_id AS id, creator_name AS author, creator_user_id, title, body AS content, date_created AS createdAt
-       FROM blogs
-       ORDER BY date_created DESC`
-    );
+    const result = await pool.query(`
+      SELECT blog_id AS id, creator_name AS author, creator_user_id, title, body AS content, date_created AS createdAt
+      FROM blogs
+      ORDER BY date_created DESC
+    `);
     return result.rows;
   }
 
   return [...fallbackPosts].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+// get one post by its id from database
 async function getPostById(postId) {
   const id = Number(postId);
 
@@ -188,12 +183,12 @@ async function getPostById(postId) {
   return fallbackPosts.find((post) => post.id === id) || null;
 }
 
-// Adds a new post to the blogs table and stores the current user as the creator.
-async function insertPost({ title, body, creatorName, creatorUserId }) {
-  const cleanTitle = normalizeText(title);
-  const cleanBody = normalizeText(body);
+// Blog post adding functionality
+async function addPost(postInfo) {
+  const title = cleanText(postInfo.title);
+  const body = cleanText(postInfo.body);
 
-  if (!cleanTitle || !cleanBody) {
+  if (!title || !body) {
     return null;
   }
 
@@ -202,28 +197,29 @@ async function insertPost({ title, body, creatorName, creatorUserId }) {
       `INSERT INTO blogs (creator_name, creator_user_id, title, body, date_created)
        VALUES ($1, $2, $3, $4, NOW())
        RETURNING blog_id AS id, creator_name AS author, creator_user_id, title, body AS content, date_created AS createdAt`,
-      [creatorName, creatorUserId, cleanTitle, cleanBody]
+      [postInfo.creatorName, postInfo.creatorUserId, title, body]
     );
     return result.rows[0];
   }
 
   const post = {
-    id: fallbackNextPostId++,
-    author: creatorName,
-    creator_user_id: creatorUserId,
-    title: cleanTitle,
-    content: cleanBody,
+    id: nextPostId++,
+    author: postInfo.creatorName,
+    creator_user_id: postInfo.creatorUserId,
+    title: title,
+    content: body,
     createdAt: new Date().toISOString(),
   };
+
   fallbackPosts.unshift(post);
   return post;
 }
 
-// Updates an existing blog entry after verifying the user owns the post.
-async function updatePostById(postId, title, body) {
+// Updating post functionality
+async function updatePost(postId, title, body) {
   const id = Number(postId);
-  const cleanTitle = normalizeText(title);
-  const cleanBody = normalizeText(body);
+  const cleanTitle = cleanText(title);
+  const cleanBody = cleanText(body);
 
   if (dbReady) {
     const result = await pool.query(
@@ -250,25 +246,23 @@ async function updatePostById(postId, title, body) {
   return fallbackPosts[index];
 }
 
-// Removes a blog post permanently from the database.
-async function deletePostById(postId) {
+// Deleting post functionality
+async function deletePost(postId) {
   const id = Number(postId);
 
   if (dbReady) {
-    const result = await pool.query(
-      `DELETE FROM blogs WHERE blog_id = $1 RETURNING blog_id AS id`,
-      [id]
-    );
+    const result = await pool.query(`DELETE FROM blogs WHERE blog_id = $1 RETURNING blog_id AS id`, [id]);
     return result.rowCount > 0;
   }
 
-  const originalLength = fallbackPosts.length;
+  const oldLength = fallbackPosts.length;
   const filtered = fallbackPosts.filter((post) => post.id !== id);
   fallbackPosts.length = 0;
   fallbackPosts.push(...filtered);
-  return filtered.length !== originalLength;
+  return filtered.length !== oldLength;
 }
 
+// home page shows all posts
 app.get("/", async (req, res) => {
   const posts = await getPosts();
   res.render("index", {
@@ -279,6 +273,7 @@ app.get("/", async (req, res) => {
   });
 });
 
+// Sign up page
 app.get("/signup", (req, res) => {
   res.render("signup", {
     user: req.session.user || null,
@@ -286,31 +281,31 @@ app.get("/signup", (req, res) => {
   });
 });
 
-// Signup flow: verify the username is available, insert the new user, and
-// redirect to the sign-in page.
+// sign up page with new account
 app.post("/signup", async (req, res) => {
   const { user_id, password, name } = req.body;
-  const cleanUserId = normalizeText(user_id);
-  const cleanPassword = normalizeText(password);
-  const cleanName = normalizeText(name);
+  const cleanUserId = cleanText(user_id);
+  const cleanPassword = cleanText(password);
+  const cleanName = cleanText(name);
 
   if (!cleanUserId || !cleanPassword || !cleanName) {
     return res.redirect("/signup?error=Please complete all signup fields.");
   }
 
-  const existingUser = await findUserById(cleanUserId);
-  if (existingUser) {
+  const existing = await findUser(cleanUserId);
+  if (existing) {
     return res.redirect("/signup?error=That user ID is already taken. Please choose another one.");
   }
 
-  const user = await createUserInStore(cleanUserId, cleanPassword, cleanName);
-  if (!user) {
+  const newUser = await createUser(cleanUserId, cleanPassword, cleanName);
+  if (!newUser) {
     return res.redirect("/signup?error=Unable to create the user account.");
   }
 
   res.redirect("/signin?success=Your account was created. Please sign in.");
 });
 
+// Sign in page, app.get
 app.get("/signin", (req, res) => {
   res.render("signin", {
     user: req.session.user || null,
@@ -319,14 +314,13 @@ app.get("/signin", (req, res) => {
   });
 });
 
-// Sign-in flow: compare submitted credentials against the users table and store
-// the active user in the session when they match.
+// Log in user w/ credentials
 app.post("/signin", async (req, res) => {
   const { user_id, password } = req.body;
-  const cleanUserId = normalizeText(user_id);
-  const cleanPassword = normalizeText(password);
+  const cleanUserId = cleanText(user_id);
+  const cleanPassword = cleanText(password);
 
-  const user = await findUserById(cleanUserId);
+  const user = await findUser(cleanUserId);
   if (!user || user.password !== cleanPassword) {
     return res.redirect("/signin?error=Invalid user ID or password. Please try again.");
   }
@@ -335,28 +329,28 @@ app.post("/signin", async (req, res) => {
   res.redirect("/");
 });
 
+// Log out user
 app.get("/logout", (req, res) => {
   req.session.destroy(() => {
     res.redirect("/signin?success=You have been logged out.");
   });
 });
 
-// New post creation route. The logged-in user’s ID and name are linked to the
-// blog entry when it is inserted into the database.
+// Creating post functionality, using app.post
 app.post("/posts", async (req, res) => {
   if (!req.session.user) {
     return res.redirect("/signin?error=Please sign in before creating a post.");
   }
 
   const { title, body } = req.body;
-  const cleanTitle = normalizeText(title);
-  const cleanBody = normalizeText(body);
+  const cleanTitle = cleanText(title);
+  const cleanBody = cleanText(body);
 
   if (!cleanTitle || !cleanBody) {
     return res.redirect("/?error=Title and content are both required.");
   }
 
-  await insertPost({
+  await addPost({
     title: cleanTitle,
     body: cleanBody,
     creatorName: req.session.user.name,
@@ -366,7 +360,7 @@ app.post("/posts", async (req, res) => {
   res.redirect("/");
 });
 
-// Edit route checks that the current user owns the blog before showing the form.
+// Show the edit page, app.get
 app.get("/posts/:id/edit", async (req, res) => {
   if (!req.session.user) {
     return res.redirect("/signin?error=Please sign in to edit a post.");
@@ -387,7 +381,7 @@ app.get("/posts/:id/edit", async (req, res) => {
   });
 });
 
-// Update route writes changes to the post and only allows updates by the creator.
+// Updating a post w/ app.put
 app.put("/posts/:id", async (req, res) => {
   if (!req.session.user) {
     return res.redirect("/signin?error=Please sign in to update a post.");
@@ -403,19 +397,18 @@ app.put("/posts/:id", async (req, res) => {
   }
 
   const { title, content } = req.body;
-  const cleanTitle = normalizeText(title);
-  const cleanContent = normalizeText(content);
+  const cleanTitle = cleanText(title);
+  const cleanContent = cleanText(content);
 
   if (!cleanTitle || !cleanContent) {
     return res.redirect(`/posts/${req.params.id}/edit`);
   }
 
-  await updatePostById(req.params.id, cleanTitle, cleanContent);
+  await updatePost(req.params.id, cleanTitle, cleanContent);
   res.redirect("/");
 });
 
-// Delete route permanently removes the post and blocks access if the user is not
-// the original author.
+// Delete post
 app.delete("/posts/:id", async (req, res) => {
   if (!req.session.user) {
     return res.redirect("/signin?error=Please sign in to delete a post.");
@@ -430,14 +423,15 @@ app.delete("/posts/:id", async (req, res) => {
     return res.redirect("/?error=You can only delete your own posts.");
   }
 
-  await deletePostById(req.params.id);
+  await deletePost(req.params.id);
   res.redirect("/");
 });
 
+// start server, app listen
 async function startServer() {
-  await tableSetup();
-  app.listen(PORT, () => {
-    console.log(`Blog app running at http://localhost:${PORT}`);
+  await setUpTables();
+  app.listen(port, () => {
+    console.log(`Blog app running at http://localhost:${port}`);
   });
 }
 

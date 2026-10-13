@@ -13,7 +13,7 @@
   <body>
     <div class="page">
       <header class="header header-bar">
-        <!-- Top navigation bar with login/logout and account controls. -->
+        <!-- Navigation bar with login/logout/account controls. -->
         <div>
           <p class="sitename">Blog Posting Site</p>
         </div>
@@ -34,40 +34,39 @@
         <% } %>
 
         <% if (user) { %>
-          <!-- Logged-in users can create a new blog post here. -->
+          <!-- Create a new blog post here. -->
           <section class="compose">
             <h1>New post</h1>
             <form action="/posts" method="POST" class="post-form">
               <div class="form-row">
                 <label for="title">Title</label>
-                <input type="text" id="title" name="title" required placeholder="My thoughts on.." />
+                <input type="text" id="title" name="title" required placeholder="My thoughts on" />
               </div>
               <div class="form-row">
                 <label for="body">Post</label>
-                <textarea id="body" name="body" rows="6" required placeholder="Write your blog post here..."></textarea>
+                <textarea id="body" name="body" rows="6" required placeholder="Write your blog post here"></textarea>
               </div>
               <button type="submit" class="btn btn-primary">Publish</button>
             </form>
           </section>
         <% } else { %>
-          <!-- Guests are prompted to sign in before writing posts. -->
+          <!-- prompted to sign in. -->
           <section class="compose guest-banner">
-            <h1>Join the conversation</h1>
+            <h1>Start Posting</h1>
             <p>Please sign in or create an account to write and edit posts.</p>
             <div class="auth-actions centered-actions">
               <a href="/signin" class="btn btn-primary">Sign In</a>
-              <a href="/signup" class="btn btn-ghost">Create Account</a>
+              <a href="/signup" class="btn btn-ghost">Sign Up</a>
             </div>
           </section>
         <% } %>
-
         <section class="postfeed">
           <h2>
             <%= posts.length === 1 ? "1 post" : posts.length + " posts" %>
           </h2>
 
           <% if (posts.length === 0) { %>
-            <p class="emptyspace">No posts yet — be the first to write one!</p>
+            <p class="emptyspace">No posts yet.</p>
           <% } else { %>
             <ul class="postlist">
               <% posts.forEach(function (post) { %>
@@ -84,7 +83,7 @@
                     <p class="post-content"><%= post.content %></p>
 
                     <% if (user && post.creator_user_id === user.user_id) { %>
-                      <!-- Only the creator sees edit/delete controls for a post. -->
+                      <!-- Only the creator sees edit/delete controls. -->
                       <div class="post-actions">
                         <a href="/posts/<%= post.id %>/edit" class="btn btn-ghost">Edit</a>
                         <form action="/posts/<%= post.id %>?_method=DELETE" method="POST" class="inline-form" onsubmit="return confirm('Delete this post?');">
@@ -99,9 +98,8 @@
           <% } %>
         </section>
       </main>
-
       <footer class="footer">
-        <p>© Jeremiah Lopez - CS312</p>
+        <p>CS312 Mini-Project 3</p>
       </footer>
     </div>
   </body>
